@@ -234,6 +234,7 @@ class Flog < ClassBasedSexpProcessor
     @class_locations     = {}
     @mass                = {}
     @parser              = nil
+    @method_and_class_body_exps = {}
     self.auto_shift_type = true
     self.reset
   end
@@ -275,6 +276,7 @@ class Flog < ClassBasedSexpProcessor
     @scores           = Hash.new 0
     method_locations.clear
     class_locations.clear
+    method_and_class_body_exps.clear
   end
 
   ##
