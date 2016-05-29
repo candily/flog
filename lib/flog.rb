@@ -10,6 +10,37 @@ class File
   end
 end
 
+class RootCollector < SexpProcessor
+  def initialize option = {}
+    super()
+    @root_exp = s(:module, option[:file_name])
+    self.auto_shift_type = false
+  end
+
+  def process(exp)
+    sexp = exp.rest
+    process_until_empty sexp if Sexp === sexp 
+    @root_exp
+  end
+
+  def drain(exp)
+    until exp.empty?
+      sexp = exp.shift
+      drain sexp if Sexp === sexp
+    end
+  end
+
+  def process_until_empty exp
+    until exp.empty?
+      syms = ["class", "sclass", "module", "defn", "defs"]
+      sexp = exp.shift
+      @root_exp.push sexp.deep_clone if !syms.include?(sexp.first.to_s) 
+      drain sexp
+      process_until_empty sexp if Sexp === sexp 
+    end
+  end
+end
+
 class Flog < ClassBasedSexpProcessor
   VERSION = "4.4.0.release.0" # :nodoc:
 
@@ -106,9 +137,9 @@ class Flog < ClassBasedSexpProcessor
   # automatically. Uses multiplier for additional spankings.
   # Spankings!
 
-  def add_to_score exp, name, score = OTHER_SCORES[name]
+  def add_to_score name, score = OTHER_SCORES[name]
     return if option[:methods] and method_stack.empty?
-    @calls[signature(exp)][name] += score * @multiplier
+    @calls[signature][name] += score * @multiplier
   end
 
   ##
@@ -221,6 +252,8 @@ class Flog < ClassBasedSexpProcessor
     return unless ast
 
     mass[file] = ast.mass
+
+    process RootCollector.new({file_name: file}).process ast.deep_clone
     process ast
   end
 
@@ -329,12 +362,12 @@ class Flog < ClassBasedSexpProcessor
   def process_alias(exp)
     process exp.shift
     process exp.shift
-    add_to_score exp, :alias
+    add_to_score :alias
     s()
   end
 
   def process_and(exp)
-    add_to_score exp, :branch
+    add_to_score :branch
     penalize_by 0.1 do
       process exp.shift # lhs
       process exp.shift # rhs
@@ -344,7 +377,7 @@ class Flog < ClassBasedSexpProcessor
   alias :process_or :process_and
 
   def process_attrasgn(exp)
-    add_to_score exp, :assignment
+    add_to_score :assignment
     process exp.shift # lhs
     exp.shift # name
     process_until_empty exp # rhs
@@ -361,21 +394,21 @@ class Flog < ClassBasedSexpProcessor
   def process_block_pass(exp)
     arg = exp.shift
 
-    add_to_score exp, :block_pass
+    add_to_score :block_pass
 
     case arg.first
     when :lvar, :dvar, :ivar, :cvar, :self, :const, :colon2, :nil then # f(&b)
       # do nothing
     when :lit, :call then                                              # f(&:b)
-      add_to_score exp, :to_proc_normal
+      add_to_score :to_proc_normal
     when :lasgn then                                                   # f(&l=b)
-      add_to_score exp, :to_proc_lasgn
+      add_to_score :to_proc_lasgn
     when :iter, :dsym, :dstr, *BRANCHING then                          # below
       # f(&proc { ... })
       # f(&"#{...}")
       # f(&:"#{...}")
       # f(&if ... then ... end") and all other branching forms
-      add_to_score exp, :to_proc_icky!
+      add_to_score :to_proc_icky!
     else
       raise({:block_pass_even_ickier! => arg}.inspect)
     end
@@ -396,13 +429,13 @@ class Flog < ClassBasedSexpProcessor
       process_until_empty exp
     end
 
-    add_to_score exp, name, SCORES[name]
+    add_to_score name, SCORES[name]
 
     s()
   end
 
   def process_case(exp)
-    add_to_score exp, :branch
+    add_to_score :branch
     process exp.shift # recv
     penalize_by 0.1 do
       process_until_empty exp
@@ -420,7 +453,7 @@ class Flog < ClassBasedSexpProcessor
   end
 
   def process_dasgn_curr(exp) # FIX: remove
-    add_to_score exp, :assignment
+    add_to_score :assignment
     exp.shift # name
     process exp.shift # assigment, if any
     s()
@@ -430,7 +463,7 @@ class Flog < ClassBasedSexpProcessor
 
   # TODO:  it's not clear to me whether this can be generated at all.
   def process_else(exp)
-    add_to_score exp, :branch
+    add_to_score :branch
     penalize_by 0.1 do
       process_until_empty exp
     end
@@ -440,7 +473,7 @@ class Flog < ClassBasedSexpProcessor
   alias :process_when   :process_else
 
   def process_if(exp)
-    add_to_score exp, :branch
+    add_to_score :branch
     process exp.shift # cond
     penalize_by 0.1 do
       process exp.shift # true
@@ -476,7 +509,7 @@ class Flog < ClassBasedSexpProcessor
       end
     end
 
-    add_to_score exp, :branch
+    add_to_score :branch
 
     process exp.shift # no penalty for LHS
 
@@ -494,7 +527,7 @@ class Flog < ClassBasedSexpProcessor
       # ignore those because they're used as array indicies instead of
       # first/last
     when Integer then
-      add_to_score exp, :lit_fixnum
+      add_to_score :lit_fixnum
     when Float, Symbol, Regexp, Range then
       # do nothing
     else
@@ -504,7 +537,7 @@ class Flog < ClassBasedSexpProcessor
   end
 
   def process_masgn(exp)
-    add_to_score exp, :assignment
+    add_to_score :assignment
 
     exp.map! { |s| Sexp === s ? s : s(:lasgn, s) }
 
@@ -520,18 +553,18 @@ class Flog < ClassBasedSexpProcessor
       end
     end
 
-    add_to_score exp, :sclass
+    add_to_score :sclass
     s()
   end
 
   def process_super(exp)
-    add_to_score exp, :super
+    add_to_score :super
     process_until_empty exp
     s()
   end
 
   def process_while(exp)
-    add_to_score exp, :branch
+    add_to_score :branch
     penalize_by 0.1 do
       process exp.shift # cond
       process exp.shift # body
@@ -542,7 +575,7 @@ class Flog < ClassBasedSexpProcessor
   alias :process_until :process_while
 
   def process_yield(exp)
-    add_to_score exp, :yield
+    add_to_score :yield
     process_until_empty exp
     s()
   end
