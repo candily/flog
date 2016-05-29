@@ -18,7 +18,7 @@ class RootCollector < SexpProcessor
   end
 
   def process(exp)
-    sexp = exp.rest
+    sexp = exp.sexp_type == :block ? exp.rest : s(s(*exp))
     process_until_empty sexp if Sexp === sexp 
     @root_exp
   end
